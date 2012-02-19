@@ -1,0 +1,58 @@
+===================
+MapReduce for Stata
+===================
+Implements a simple MapReduce framework to use with Stata do files. Can be useful when bootstrapping, or other massively parallel tasks.
+
+Basics
+------
+1. A settings file stores the reference to scripts and keys.
+2. mapper.py runs the given Stata script with the key as its parameter.
+  * solve locking somehow
+3. The Stata script should save a single text file, key.csv.
+   * These are stored in the following structure
+      filename / hash / key.csv
+   * hash is calculated of the do file to make sure we are not mixing results from different files
+4. reducer.py merges the csv files for each filename / hash, and runs the Stata script given in settings.
+5. Results are saved in a single text file.
+
+Usage
+-----
+1. Your mapper do file should take one parameter, KEY, on the command line. Every other parameter should be stored on the local file system. (Can be distributed with Dropbox.) It should save all results in a comma separated file KEY.csv.
+2. Edit settings.py (should be a yaml later) to name your mapper and list your KEYs. Optionally, set the number of workers.
+3. Then just run mapper.py. It will start Stata n times, and once one has finished, will start a new one.
+4. The output of the mapper dofiles are stored in separate files in a folder, "dofile/version".
+5. Once all KEYs have been processed, run reducer.py. You get a single file for each "dofile/version".
+
+Example
+-------
+I have a "bootstrap.do" with version "e5f85" (this will be calculated based on the actual content of the do file). It takes a SEED parameter to draw new random samples, runs a regression, and saves the estimates it in a .csv file. This is my mapper file.
+
+I have a "sterrors.do" with version "0d66d", which reads a single .csv file of all bootstrapped estimates and saves standard errors.
+
+The content of my settings.yaml file:
+    mapper: bootstrap.do
+    keys: [1, 2, 3, 4, 5]
+    reducer: sterrors.do
+
+I run "mapper.py". It creates a folder "bootstrap/e5f85" and the empty files
+ - 1.new
+ - 2.new
+ - 3.new
+ - 4.new
+inside it.
+
+The version is needed because if I rewrite the dofile, I do not want to mix the new and the old results.
+
+It starts a Stata instance with "stata-mp -b bootstrap.do 1" and renames "1.new" to "1.lock" to indicate that work has started. (Lock expiry should be handled.)
+
+Once it finished, the results are save to "1.map" to indicate that the mapping phase is done. "1.lock" is deleted, and work on "2" can start.
+
+After I see all locks gone, I start "reducer.py". It browses through all ".map" files, merges the one that belong to one mapper and version to "bootstrap.e5f85.map". It starts "stata-mp -b sterrors.do bootstrap.e5f85.map", which reads the individual estimates and calculates standard errors.
+
+Implementation
+--------------
+
+Issues
+------
+ * lock expiry
+ * extensions of Stata input and output files
